@@ -1,0 +1,203 @@
+Program.Sub.ScreenSU.Start
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Hooks: 15954 Post Grid Load Hook
+'Notes:
+'  If work order priority (as listed in V_JOB_HEADER) equals 999 turn GUI Line RED, if 998 turn ORANGE, if 997 turn YELLOW.
+'  These colors represent a special condition for an employee to look for on the GUI
+'  to halt all email communication on Rush, Hot, Line Down work orders.
+'modified RAN - 070716 - Read company option
+'modified RDF - 151118 - MyBar
+'WIP BIN Company option must be enabled
+
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+
+F.ODBC.Connection!conX.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+F.Intrinsic.Control.CallSub(Load_bdf)
+F.ODBC.Connection!conX.Close
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GAB_5347_GUI_OPER.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.Main.End
+
+Program.Sub.Load_BDF.Start
+F.Intrinsic.Control.SetErrorHandler("Load_BDF_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.sQuery.Declare(String)
+V.Local.sRow.Declare(String)
+V.Local.sRowR.Declare(String)
+V.Local.sRowW.Declare(String)
+V.Local.sJob.Declare(String)
+V.Local.sSeq.Declare(String)
+V.Local.sPriority.Declare(String)
+V.Local.sCol9.Declare(String)
+v.Local.sCol10.Declare(string)
+V.Local.sReady.Declare(String)
+V.Local.iRows.Declare(Long)
+V.Local.iCounter.Declare(Long)
+V.Local.iColor.Declare(Long)
+V.Local.bHighPriority.Declare(Boolean)
+V.Local.bPrior.Declare(Boolean)
+V.Local.sStr.Declare(String)
+V.Local.bEnt.Declare(Boolean)
+v.Local.sCodeSort.Declare(string)
+V.Local.sWorkcentre.Declare(string)
+
+'Make a copy of the job BDF
+F.Intrinsic.BDF.Load("AUX001","AUX001")
+F.Intrinsic.BDF.Clone("AUX001","Clone")
+F.Intrinsic.BDF.ReadRowCount("AUX001",V.Local.iRows)
+F.Intrinsic.Math.Sub(V.Local.iRows,1,V.Local.iRows)
+
+'Loop through each row of the BDF
+F.Intrinsic.Control.For(V.Local.iCounter,0,V.Local.iRows,1)
+	'Read the row and get the job and suffix information
+	
+	F.Intrinsic.BDF.SetColumnTitle("Clone",9,"Person/WC")
+	F.Intrinsic.BDF.ReadRow("AUX001",V.Local.iCounter,V.Local.sRow)
+	F.Intrinsic.String.Split(V.Local.sRow,"|~|",V.Local.sRowR)
+	F.Intrinsic.String.Split(V.Local.sRowR(1),"-",V.Local.sJob)
+	V.Local.sSeq.Set(V.Local.sRowR(2).Trim)
+	
+	'if the upperbound of the array is more than 8, account for the extra column
+	'(this is needed because the hook fires on multiple screens)
+	F.Intrinsic.Control.If(V.Local.sRowR.UBound,=,8)
+		V.Local.sCol9.Set("")
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("|~|{0}",V.Local.sRowR(9),V.Local.sCol9)
+	F.Intrinsic.Control.EndIf
+	'Query the database to determine what the color should be
+	F.Intrinsic.String.Build("SELECT PRIORITY FROM JOB_HEADER WHERE Job = '{0}' AND Suffix = '{1}'",V.Local.sJob(0).Trim,V.Local.sJob(1).Trim,V.Local.sQuery)
+	F.ODBC.Connection!conX.OpenRecordsetRO("rstJobs",V.Local.sQuery)
+	F.Intrinsic.Control.If(V.ODBC.conX!rstJobs.EOF,<>,True)
+		'Color code based on priority, default to white
+		V.Local.sPriority.Set(V.ODBC.conX!rstJobs.FieldValTrim!PRIORITY)
+		F.Intrinsic.Control.SelectCase(V.Local.sPriority)
+		F.Intrinsic.Control.Case("999")
+			V.Local.iColor.Set(V.Color.LtRed)
+			V.Local.bHighPriority.Set(True)
+		F.Intrinsic.Control.Case("998")
+			V.Local.iColor.Set(V.Color.Orange)
+			V.Local.bHighPriority.Set(True)
+		F.Intrinsic.Control.Case("997")
+			V.Local.iColor.Set(V.Color.Yellow)
+			V.Local.bHighPriority.Set(True)
+		F.Intrinsic.Control.CaseElse
+			V.Local.iColor.Set(V.Color.White)
+			V.Local.bHighPriority.Set(False)
+		F.Intrinsic.Control.EndSelect
+
+		'If the work order is ready, make the ready field green
+		F.Intrinsic.Control.If(V.Local.sRowR(3),=,"Y")
+ 			' option to ignore prior material seq
+			F.Intrinsic.Control.If(V.Local.bEnt,=,False)
+				F.Global.General.ReadOption(400765,0,False,V.Local.bPrior)
+				F.Intrinsic.Control.If(V.Local.bPrior,=,True)
+					V.Local.sStr.Set(" 'M','C' ")
+					F.Intrinsic.String.Build(" LMO NOT IN({0}) and ",V.Local.sStr,V.Local.sStr)
+				F.Intrinsic.Control.Else
+					F.Global.General.ReadOption(400766,0,False,V.Local.bPrior)
+					V.Local.sStr.Set("'C'")
+					F.Intrinsic.String.Build(" LMO <> {0} and ",V.Local.sStr,V.Local.sStr)
+				F.Intrinsic.Control.EndIf
+				V.Local.bEnt.Set(True)
+			F.Intrinsic.Control.EndIf
+			' option to ignore prior operation seq
+			F.Intrinsic.Control.If(V.Local.bPrior,=,True)
+				F.Intrinsic.String.Build("select job  from v_job_operations where {0} Flag_closed <> 'Y' and  job = '{1}' and Suffix = '{2}' and Seq < '{3}'",V.Local.sStr,V.Local.sJob(0).Trim,V.Local.sJob(1),V.Local.sSeq,V.Local.sQuery)
+				F.ODBC.Connection!conX.OpenLocalRecordsetRO("rstProcess",V.Local.sQuery)
+				F.Intrinsic.Control.If(V.ODBC.conX!rstProcess.EOF,<>,True)
+					F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(3),V.Color.Yellow,V.Local.sReady)
+				F.Intrinsic.Control.Else
+					F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(3),V.Color.LtGreen,V.Local.sReady)
+				F.Intrinsic.Control.EndIf
+				F.ODBC.conX!rstProcess.Close
+			F.Intrinsic.Control.Else
+				F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(3),V.Color.LtGreen,V.Local.sReady)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(3),V.Local.iColor,V.Local.sReady)
+		F.Intrinsic.Control.EndIf
+
+		' If the job is in process, turn either the whole row (if low priority) or WO/seq (if high priority) green
+		F.Intrinsic.String.Build("Select * From JOBS_IN_PROCESS_G Where Job = '{0}' and Suffix = '{1}' and Seq = '{2}'",V.Local.sJob(0).Trim,V.Local.sJob(1),V.Local.sSeq,V.Local.sQuery)
+		F.ODBC.Connection!conX.OpenRecordsetRO("rstProcess",V.Local.sQuery)
+		'Get the OPER_SORT_CODE
+		f.Intrinsic.String.Build("SELECT CODE_SORT_OPER FROM V_JOB_OPERATIONS WHERE JOB='{0}' AND SUFFIX='{1}' AND SEQ='{2}'",v.Local.sJob(0).trim,v.Local.sJob(1).trim,v.Local.sSeq,v.Local.squery)
+		f.ODBC.Connection!conX.executeandreturn(v.Local.sQuery,v.Local.sCodeSort)
+		'Workcenter
+		f.Intrinsic.String.Build("SELECT PART FROM V_JOB_OPERATIONS WHERE JOB='{0}' AND SUFFIX='{1}' AND SEQ='{2}'",v.Local.sJob(0).trim,v.Local.sJob(1).trim,v.Local.sSeq,v.Local.squery)
+		f.ODBC.Connection!conX.executeandreturn(v.Local.sQuery,v.Local.sWorkcentre)
+		
+		F.Intrinsic.Control.If(V.ODBC.conX!rstProcess.EOF,<>,True)
+			F.Intrinsic.Control.If(V.Local.bHighPriority,=,False)
+				V.Local.iColor.Set(V.Color.LtGreen)
+				F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(1),V.Color.LtGreen,V.Local.sJob)
+				F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(2),V.Color.LtGreen,V.Local.sSeq)
+				F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(3),V.Color.LtGreen,V.Local.sReady)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(1),V.Color.LtGreen,V.Local.sJob)
+				F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(2),V.Color.LtGreen,V.Local.sSeq)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(1),V.Local.iColor,V.Local.sJob)
+			F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sRowR(2),V.Local.iColor,V.Local.sSeq)
+		F.Intrinsic.Control.EndIf
+		F.ODBC.conX!rstProcess.Close
+
+		f.Intrinsic.String.Concat(v.Local.sCodeSort.Trim,"-",v.Local.sWorkcentre.Trim,v.Local.sCol9)
+		'Change the color of the row accordingly
+		F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sCol9,V.Local.iColor,V.Local.sCol9)
+		F.Intrinsic.String.Build("{0}]=[BC::{1}|~|{2}|~|{3}|~|{4}|~|{5}]=[BC::{6}|~|",V.Local.sRowR(0),V.Local.iColor,V.Local.sJob,V.Local.sSeq,V.Local.sReady,V.Local.sRowR(4),V.Local.iColor,V.Local.sRowW)
+		F.Intrinsic.String.Build("{0}{1}]=[BC::{2}|~|{3}]=[BC::{4}|~|{5}]=[BC::{6}|~|{7}]=[BC::{8}|~|{9}|~|{11}]",V.Local.sRowW,V.Local.sRowR(5),V.Local.iColor,V.Local.sRowR(6),V.Local.iColor,V.Local.sRowR(7),V.Local.iColor,V.Local.sRowR(8),V.Local.iColor,V.Local.sCol9,V.Local.sRowW)
+	F.Intrinsic.Control.Else
+		'If the Job/Suffix can't be found, let the color default to white
+		V.Local.iColor.Set(V.Color.White)
+		F.Intrinsic.String.Build("{0}]=[BC::{1}",V.Local.sCol9,V.Local.iColor,V.Local.sCol9)
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sCol10,V.Local.iColor,V.Local.sCol10)
+		F.Intrinsic.String.Build("{0}]=[BC::{1}|~|{2}|~|{3}|~|{4}|~|{5}]=[BC::{6}|~|{7}",V.Local.sRowR(0),V.Local.iColor,V.Local.sJob,V.Local.sSeq,V.Local.sReady,V.Local.sRowR(4),V.Local.iColor,V.Local.sRowW)
+		F.Intrinsic.String.Build("{0}{1}]=[BC::{2}|~|{3}]=[BC::{4}|~|{5}]=[BC::{6}|~|{7}]=[BC::{8}|~|{9}]=[BC::{10}|~|{11}",V.Local.sRowW,V.Local.sRowR(5),V.Local.iColor,V.Local.sRowR(6),V.Local.iColor,V.Local.sRowR(7),V.Local.iColor,V.Local.sRowR(8),V.Local.iColor,V.Local.sCol9,V.Local.sRowW)
+	F.Intrinsic.Control.EndIf
+	F.ODBC.conX!rstJobs.Close
+	'Write out to the BDF copy
+	F.Intrinsic.BDF.WriteRow("Clone",V.Local.sRowW.Trim)
+F.Intrinsic.Control.Next(V.Local.iCounter)
+'Save the copy over the old BDF and display
+F.Intrinsic.BDF.Save("Clone","AUX001")
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Load_BDF_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3504_Gui_Wo_Clrcd_CERT.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.Load_BDF.End
+
+Program.Sub.Comments.Start
+${$0$}$GCG_gui_wo_clrcd_CERT$}$Strider$}$10/6/2015
+${$1$}$$}$$}$0$}$15954$}$Post Grid Load Hook$}$10/6/2015 4:09:26 PM$}$(Program: OLG002; Screen: OLS007)
+
+${$3$}$0$}$$}$-1$}$-1$}$$}$1/1/1900$}$In the GUI Timeclock & Collection utility select any department, workcenter, or workgroup screen. The program will automatically color code all jobs according to priority, 999 = red, 998 = orange, and 997 = yellow.
+Program.Sub.Comments.End
+
